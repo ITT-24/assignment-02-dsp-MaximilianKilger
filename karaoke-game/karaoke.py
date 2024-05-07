@@ -40,12 +40,12 @@ def find_prevalent_frequency(data:np.ndarray, sampling_rate:int) -> float:
     wd = np.hamming(len(data)) * data
     fourier = np.fft.fft(wd)
     
-    frequencies = np.fft.fftfreq(len(wd), 1/RATE)
+    frequencies = np.fft.fftfreq(len(wd), 1/sampling_rate)
     
     highest_frequency = np.max(frequencies[np.where(np.abs(fourier) == np.max(np.abs(fourier)))])
-    return highest_frequency
+    return abs(highest_frequency)
 
-# from this part on, some parts are stolen from audio-sample.py
+# from this part on, some parts for reading audio are stolen from audio-sample.py
 # print info about audio devices
 # let user select audio device
 info = p.get_host_api_info_by_index(0)
@@ -224,7 +224,7 @@ def on_key_press(symbol, modifiers):
     
     if symbol == pyglet.window.key.Q:
         window.close()
-        exit(0)
+        os._exit(0)
 
 
 @window.event
