@@ -8,3 +8,5 @@ Use keys 1 and 2 to switch between songs.
 
 ## Whistle input
 Long whistles have a better detection rate than short whistles.
+There is a 1.0 second grace period after every input where no new inputs can be detected.
+This is done to prevent spurious inputs.

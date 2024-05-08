@@ -42,9 +42,11 @@ CHANNELS = 1  # Mono audio
 RATE = 44100  # Audio sampling rate (Hz)
 WINDOW = 25
 
+GRACE_PERIOD = 1.0
+
 STDERR_THRESH = 5
 RVALUE_THRESH = 0.8
-SLOPE_THRESH = 10
+SLOPE_THRESH = 15
 
 SHOW_DEBUG_DIAGRAM = False
 p = pyaudio.PyAudio()
@@ -83,8 +85,10 @@ if SHOW_DEBUG_DIAGRAM:
     plt.show()
 
 status = 0
+chunks_since_last_input = 0
 # continuously capture and plot audio singal
 while True:
+    chunks_since_last_input += 1
     # Read audio data from stream
     data = stream.read(CHUNK_SIZE)
 
@@ -104,19 +108,25 @@ while True:
                 if status == 1:
                     keyboard.release(Key.up)
                 print("----")
-            elif direction == -1:
-                if status == 1:
-                    keyboard.release(Key.up)
-                keyboard.press(Key.down)
-                print("DOWN")
+                status = direction
+            else:
+                if chunks_since_last_input * CHUNK_SIZE / RATE >= GRACE_PERIOD:
+                    if direction == -1:
+                        if status == 1:
+                            keyboard.release(Key.up)
+                        keyboard.press(Key.down)
+                        print("DOWN")
+                        chunks_since_last_input = 0
+                        
+                    elif direction == 1:
+                        if status == -1:
+                            keyboard.release(Key.down)
+                        keyboard.press(Key.up)
+                        print("-UP-")
+                        chunks_since_last_input = 0
+                status = direction
+                    
                 
-            elif direction == 1:
-                if status == -1:
-                    keyboard.release(Key.down)
-                keyboard.press(Key.up)
-                print("-UP-")
-            
-            status = direction
                 
 
         if SHOW_DEBUG_DIAGRAM:

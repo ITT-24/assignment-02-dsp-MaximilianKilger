@@ -142,7 +142,7 @@ class GameManager():
                 
                 print(f"{start} - {stop}")
                 for j in range(start, stop):
-                    self.note_sheet[i][j] = note # inserting values via slices doesn't work, the numpy documentation is hosted on a potato battery, and I'm at the end of my nerves, good code standards be damned, I'm using a second for loop for this like a caveman
+                    self.note_sheet[i][j] = note 
                 cursor = stop
                 
         self.chunk_pixel_width = WIN_WIDTH / self.num_chunks_in_file
