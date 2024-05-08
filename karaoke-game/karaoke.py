@@ -16,13 +16,17 @@ FORMAT = pyaudio.paInt16  # Audio format
 CHANNELS = 1  # Mono audio
 RATE = 44100  # Audio sampling rate (Hz)
 p = pyaudio.PyAudio()
-TRACK_NUMBER = 0
-TN = TRACK_NUMBER
 
+TRACK_NUMBER = 0 #track of the midi that the user has to sing to
+TN = TRACK_NUMBER
+STANDARD_TEMPO = 500000
+
+#Range of Midi Notes displayed on screen
 NOTE_RANGE = (36,84)
 
+# Maximum allowed difference of sung note to actual note to qualify for a certain rating.
 RATING_THRESHOLDS = {
-    "!!Superstar!!" : 0.25,
+    "!!Superstar!!" : 0.25, # in the same unit as midi notes
     "Amazing!" : 0.5,
     "Great" : 0.75,
     "Good" : 1.0,
@@ -43,11 +47,16 @@ def frequency_to_midi_num(f:float) -> float:
     m = 12 * math.log(f/440,2) + 69 # newt.phys.unsw.edu.au/jw/notes.html
     return m
 
-def find_prevalent_frequency(data:np.ndarray, sampling_rate:int) -> float:
-    
-    sos = signal.butter(5, [80, 1200], 'bandpass', fs=sampling_rate, output='sos')
-    filtered_data = signal.sosfiltfilt(sos, data)
-    wd = np.hamming(len(data)) * data
+# given a ndarray (float) of samples, finds the most energetic frequency in the fourier transform of the signal
+def find_prevalent_frequency(data:np.ndarray, sampling_rate:int, filter_low:float=None, filter_high:float=None) -> float:
+    use_filter = filter_low != None and filter_high != None
+    wd = np.zeros((len(data)))
+    if use_filter:
+        sos = signal.butter(5, [filter_low, filter_high], 'bandpass', fs=sampling_rate, output='sos') #apply bandpass filter
+        filtered_data = signal.sosfiltfilt(sos, data)
+        wd = np.hamming(len(filtered_data)) * filtered_data
+    else:
+        wd = np.hamming(len(data)) * data #apply hamming window
     fourier = np.fft.fft(wd)
     
     frequencies = np.fft.fftfreq(len(wd), 1/sampling_rate)
@@ -87,6 +96,16 @@ stream = p.open(format=FORMAT,
 WIN_WIDTH = 1200
 WIN_HEIGHT = 600
 UI_HEIGHT = 100
+
+RATING_POS_X = 15
+RATING_POS_Y = 75 
+
+SCORE_POS_X = WIN_WIDTH - 200
+SCORE_POS_Y = 75
+
+CURSOR_COLOR = (255,255,255)
+SING_BAR_COLOR = (255,0,0)
+
 window = pyglet.window.Window(WIN_WIDTH, WIN_HEIGHT)
 
 filenames = ['freude.mid','berge.mid']
@@ -108,48 +127,49 @@ class GameManager():
         self.setup_notes_graphics()
         self.setup_ui()
 
-    
+    # reads song from file, converts midi messages to discrete numpy array with note values
     def setup_song(self,filename):
         filepath = os.path.join('songs', filename)
         file = MidiFile(filepath)
 
         length = file.length
         self.num_chunks_in_file = int(length * (RATE / CHUNK_SIZE))
-        self.note_sheet = np.zeros((len(file.tracks),self.num_chunks_in_file), dtype=int)
-        tempo = 500000 
+        self.note_sheet = np.zeros((len(file.tracks),self.num_chunks_in_file), dtype=int) # a numpy array holding the note playing during each discrete chunk.
+        tempo = STANDARD_TEMPO 
 
         #midi_parse_re = re.compile("{.*} channel={.*} note={.*} velocity={.*} time={.*}")
         for i, track in enumerate(file.tracks):
             cursor = 0
             for message in track:
                 if message.is_meta:
-                    print(message)
+                    #print(message)
                     continue
-                print(message)
+                #print(message)
                 #mode, channel, note, velocity, time = midi_parse_re.match(message).groups()
                 #print(f"mode: {mode}, note:{note}, time:{time}")
                 midi_type = message.dict()["type"]
-                time = mido.tick2second(message.dict()["time"], file.ticks_per_beat, tempo)
+                time = mido.tick2second(message.dict()["time"], file.ticks_per_beat, tempo) #duration of midi note
                 note = -1
                 start = cursor
-                stop = int(cursor + time * (RATE / CHUNK_SIZE))
+                stop = int(cursor + time * (RATE / CHUNK_SIZE)) #start and stop of the note in discrete numpy array
                 if midi_type == "note_on":
                     note = message.dict()["note"]
-                    stop = int(cursor + max(1, time * (RATE / CHUNK_SIZE)))
+                    stop = int(cursor + max(1, time * (RATE / CHUNK_SIZE))) #make sure that notes take up at least one chunk
 
-                print(note, "   ", time)
+                #print(note, "   ", time)
 
                 
-                print(f"{start} - {stop}")
+                #print(f"{start} - {stop}")
                 for j in range(start, stop):
                     self.note_sheet[i][j] = note 
                 cursor = stop
                 
-        self.chunk_pixel_width = WIN_WIDTH / self.num_chunks_in_file
-        self.chunk_pixel_height = (WIN_HEIGHT-UI_HEIGHT) / (NOTE_RANGE[1] - NOTE_RANGE[0])
+        self.chunk_pixel_width = WIN_WIDTH / self.num_chunks_in_file # for UI, the width of one chunk on screen
+        self.chunk_pixel_height = (WIN_HEIGHT-UI_HEIGHT) / (NOTE_RANGE[1] - NOTE_RANGE[0]) # for UI, the height of one note on screen
             
-        print(self.note_sheet)        
+        #print(self.note_sheet)        
 
+    # creates the graphical representation of the notes.
     def setup_notes_graphics(self):
         self.notes_batch = pyglet.graphics.Batch()
         self.note_bars = []
@@ -159,33 +179,38 @@ class GameManager():
             note_bar = pyglet.shapes.Rectangle(xpos,ypos,self.chunk_pixel_width, self.chunk_pixel_height, (255,255,0), batch=self.notes_batch)
             self.note_bars.append(note_bar)
 
+    # creates UI for score and rating
     def setup_ui(self):
         self.score_label = pyglet.text.Label("", font_name="Century Gothic", font_size=30)
-        self.score_label.x = WIN_WIDTH - 200
-        self.score_label.y = 75
+        self.score_label.x = SCORE_POS_X
+        self.score_label.y = SCORE_POS_Y
 
         self.rating_label = pyglet.text.Label("", font_name="Century Gothic", font_size=30)
-        self.rating_label.x = 15
-        self.rating_label.y = 75
+        self.rating_label.x = RATING_POS_X
+        self.rating_label.y = RATING_POS_Y
     
 
+    #draws notes to screen
     def draw_notes (self):
         self.notes_batch.draw()
 
+    #draw cursor (that signifies where in the song we are) to the screen
     def draw_cursor(self):
         if self.cursor_pos != -1:
             xpos = self.cursor_pos * self.chunk_pixel_width
-            cursor_bar = pyglet.shapes.Rectangle(xpos, UI_HEIGHT, self.chunk_pixel_width, WIN_HEIGHT-UI_HEIGHT, color=(255,255,255))
+            cursor_bar = pyglet.shapes.Rectangle(xpos, UI_HEIGHT, self.chunk_pixel_width, WIN_HEIGHT-UI_HEIGHT, color=CURSOR_COLOR)
             cursor_bar.draw()
 
+    #draw bar for currently sung note to the screen
     def draw_sung_note(self):
         note = self.sung_note
         if note != -1:
-            bar_height = self.chunk_pixel_height / 2
-            ypos = UI_HEIGHT + self.chunk_pixel_height * (note - NOTE_RANGE[0]) - self.chunk_pixel_height / 4
-            bar = pyglet.shapes.Rectangle(0,ypos, WIN_WIDTH, bar_height, (255,0,0))
+            bar_height = self.chunk_pixel_height / 4
+            ypos = UI_HEIGHT + self.chunk_pixel_height * (note - NOTE_RANGE[0]) - self.chunk_pixel_height * 3 / 8
+            bar = pyglet.shapes.Rectangle(0,ypos, WIN_WIDTH, bar_height, SING_BAR_COLOR)
             bar.draw()
 
+    # draws score and rating labels
     def draw_ui(self):
         self.rating_label.text = self.rating
         self.rating_label.draw()
@@ -193,12 +218,14 @@ class GameManager():
         self.score_label.text = f"Score :{int(self.score)}" if self.score != None else ""
         self.score_label.draw()
     
+    # draws everything relevant
     def render(self):
         gm.draw_notes()
         gm.draw_sung_note()
         gm.draw_cursor()
         gm.draw_ui()
             
+    # starts parallel thread that processes audio samples
     def play_round(self):
 
         if not self.is_playing:
@@ -206,12 +233,15 @@ class GameManager():
         round_loop_thread = Thread(target=self.round_loop)
         round_loop_thread.start()
 
+    # plays one round of the game. Blocking, don't call in main thread.
     def round_loop(self):
+        #reset
         self.score = 0
         self.cursor_pos = 0
         last_note = -1
-        print(len(self.note_sheet[TN]))
-        # continuously capture and plot audio singal
+        #print(len(self.note_sheet[TN]))
+
+        # continuously capture and plot audio singal # here, we start getting into some stolen code again
         while self.cursor_pos < len(self.note_sheet[TN]):
             # Read audio data from stream
             data = stream.read(CHUNK_SIZE)
@@ -220,15 +250,19 @@ class GameManager():
             data = np.frombuffer(data, dtype=np.int16)
             # plot signal in frequency domain
             #line.set_ydata(np.abs(fourier))
+            
+            # find sung frequency
             frequency = find_prevalent_frequency(data, RATE)
             if frequency == None:
                 continue
-
+            
             midi_note = frequency_to_midi_num(frequency)
             if midi_note != None:
                 #midi_note = midi_note % 12
+                # instead of rating the note on its own, generate all notes that are one or more whole octaves above and below the note sung
+                # and only rate the one closest to the note in the song
                 base_note = midi_note % 8
-                octaves = np.array([i*8+base_note for i in range(1,11)])
+                octaves = np.array([i*8+base_note for i in range(0,11)])
                 
                 if self.note_sheet[TN][self.cursor_pos] != -1 and self.note_sheet[TN][self.cursor_pos] != 0:
                     differences = np.abs(octaves - self.note_sheet[TN][self.cursor_pos])
@@ -237,22 +271,31 @@ class GameManager():
                     differences = np.abs(octaves - last_note)
                 official_difference = np.min(differences)
                 official_note = list(octaves)[list(differences).index(official_difference)]
+
+                # share sung note with the main thread
                 self.sung_note = official_note
                 #print(official_difference)
+
                 if self.note_sheet[TN][self.cursor_pos] != -1 and self.note_sheet[TN][self.cursor_pos] != 0:
                     #give a score
                     self.deltas.append(official_difference)
                     self.calc_score()
+
                     #difference = abs(self.note_sheet[TN][self.cursor_pos] - midi_note)
                 #print(midi_note)
                 #line.set_ydata(midi_note)
             #print(np.max(frequencies[np.where(np.abs(fourier) == np.max(np.abs(fourier)))]))
             #print(frequencies[mask])
+
+            #advance cursor
             self.cursor_pos += 1
+        
+        #reset
         self.sung_note = -1
         self.cursor_pos = -1
         self.is_playing = False
     
+    #calculate score and give rating
     def calc_score(self):
         avg_difference = np.mean(list(self.deltas))
         rating = ""
@@ -281,11 +324,13 @@ def on_key_press(symbol, modifiers):
         window.close()
         os._exit(0)
 
+    # switch to song 1
     if symbol == pyglet.window.key._1:
         gm.filename = filenames[0]
         gm.setup_song(gm.filename)
         gm.setup_notes_graphics()
 
+    # switch to song 2
     if symbol == pyglet.window.key._2:
         gm.filename = filenames[1]
         gm.setup_song(gm.filename)

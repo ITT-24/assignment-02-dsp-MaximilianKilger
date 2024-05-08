@@ -7,6 +7,7 @@ from collections import deque
 from scipy.stats import linregress
 from pynput.keyboard import Key, Controller
 
+#finds the most prevalent frequency in the signal.
 def find_prevalent_frequency(data:np.ndarray, sampling_rate:int) -> float:
     
     sos = signal.butter(5, [80, 1200], 'bandpass', fs=sampling_rate, output='sos')
@@ -19,6 +20,9 @@ def find_prevalent_frequency(data:np.ndarray, sampling_rate:int) -> float:
     highest_frequency = np.max(frequencies[np.where(np.abs(fourier) == np.max(np.abs(fourier)))])
     return abs(highest_frequency)
 
+# fit a linear function to audio samples.
+# use fitting criteria and slope to determine if the sound follows a definitive downward or upwards motion.
+# returns 1 to signify upwards motion, -1 to signify downward motion, 0 to signify noise or constant pitch.
 def get_direction(data:np.ndarray):
 
     slope, intercept, rvalue, pvalue, std_error = linregress(np.arange(0,len(data),1), data)
@@ -40,15 +44,17 @@ CHUNK_SIZE = 1024  # Number of audio frames per buffer
 FORMAT = pyaudio.paInt16  # Audio format
 CHANNELS = 1  # Mono audio
 RATE = 44100  # Audio sampling rate (Hz)
-WINDOW = 25
+WINDOW = 25 # Amount of chunks kept in memory to find upwards/downwards pitch motion
 
-GRACE_PERIOD = 1.0
 
-STDERR_THRESH = 5
+GRACE_PERIOD = 1.0 # a small timeframe (in seconds) after an input triggered by the script in which no second input may be triggered. Prevents spurious inputs.
+
+# some values for determining if sound follows a definitive pitch motion.
+STDERR_THRESH = 5 # currently unused.
 RVALUE_THRESH = 0.8
 SLOPE_THRESH = 15
 
-SHOW_DEBUG_DIAGRAM = False
+SHOW_DEBUG_DIAGRAM = True
 p = pyaudio.PyAudio()
 keyboard = Controller()
 
@@ -64,6 +70,7 @@ for i in range(0, numdevices):
 print('select audio device:')
 input_device = int(input())
 
+#keeps track of the prevalent frequency of n=WINDOW chunks for analysis.
 freqs = deque(maxlen=WINDOW)
 
 
@@ -97,11 +104,14 @@ while True:
 
     freq = find_prevalent_frequency(data, RATE)
     freqs.append(freq)
+    
+    #are there enough frequencies for analysis?
     if len(freqs) >= WINDOW:
         if SHOW_DEBUG_DIAGRAM:
             line.set_ydata(freqs)
         direction = get_direction(np.array(freqs))
-        if direction != status:
+
+        if direction != status: #does the status change?
             if direction == 0:
                 if status == -1:
                     keyboard.release(Key.down)
@@ -110,7 +120,7 @@ while True:
                 print("----")
                 status = direction
             else:
-                if chunks_since_last_input * CHUNK_SIZE / RATE >= GRACE_PERIOD:
+                if chunks_since_last_input * CHUNK_SIZE / RATE >= GRACE_PERIOD: #prevent spurious inputs
                     if direction == -1:
                         if status == 1:
                             keyboard.release(Key.up)
@@ -126,9 +136,6 @@ while True:
                         chunks_since_last_input = 0
                 status = direction
                     
-                
-                
-
         if SHOW_DEBUG_DIAGRAM:
             # Redraw plot
             fig.canvas.draw()
