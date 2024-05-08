@@ -1,2 +1,6 @@
 pyglet
 numpy
+matplotlib
+scipy
+mido
+pyaudio

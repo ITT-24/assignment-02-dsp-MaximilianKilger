@@ -1,0 +1,6 @@
+PyAudio
+numpy
+scipy
+scikit-learn
+matplotlib
+pynput

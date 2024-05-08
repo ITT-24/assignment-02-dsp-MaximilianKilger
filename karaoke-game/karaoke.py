@@ -11,7 +11,7 @@ from threading import Thread
 from collections import deque
 # Set up audio stream
 # reduce chunk size and sampling rate for lower latency
-CHUNK_SIZE = 1024  # Number of audio frames per buffer
+CHUNK_SIZE = 4096  # Number of audio frames per buffer
 FORMAT = pyaudio.paInt16  # Audio format
 CHANNELS = 1  # Mono audio
 RATE = 44100  # Audio sampling rate (Hz)
@@ -20,6 +20,16 @@ TRACK_NUMBER = 0
 TN = TRACK_NUMBER
 
 NOTE_RANGE = (36,84)
+
+RATING_THRESHOLDS = {
+    "!!Superstar!!" : 0.25,
+    "Amazing!" : 0.5,
+    "Great" : 0.75,
+    "Good" : 1.0,
+    "Okay": 1.5,
+    "Meh...": 3.0,
+    "My ears!": 7000
+}
 
 def midi_num_to_frequency (m:int) -> float:
     if m <= 0:
@@ -76,67 +86,87 @@ stream = p.open(format=FORMAT,
 #plt.show()
 WIN_WIDTH = 1200
 WIN_HEIGHT = 600
+UI_HEIGHT = 100
 window = pyglet.window.Window(WIN_WIDTH, WIN_HEIGHT)
 
-filename = 'freude.mid'
-filepath = os.path.join('songs', filename)
-file = MidiFile(filepath)
+filenames = ['freude.mid','berge.mid']
 
-length = file.length
-num_chunks_in_file = int(length * (RATE / CHUNK_SIZE))
-chunk_notes = np.zeros((len(file.tracks),num_chunks_in_file), dtype=int)
-tempo = 500000 
-
-#midi_parse_re = re.compile("{.*} channel={.*} note={.*} velocity={.*} time={.*}")
-for i, track in enumerate(file.tracks):
-    cursor = 0
-    for message in track:
-        if message.is_meta:
-            print(message)
-            continue
-        print(message)
-        #mode, channel, note, velocity, time = midi_parse_re.match(message).groups()
-        #print(f"mode: {mode}, note:{note}, time:{time}")
-        midi_type = message.dict()["type"]
-        time = mido.tick2second(message.dict()["time"], file.ticks_per_beat, tempo)
-        note = -1
-        if midi_type == "note_on":
-            note = message.dict()["note"]
-
-        print(note, "   ", time)
-
-        
-        start = cursor
-        stop = int(cursor + time * (RATE / CHUNK_SIZE))
-        print(f"{start} - {stop}")
-        for j in range(start, stop):
-            chunk_notes[i][j] = note # inserting values via slices doesn't work, the numpy documentation is hosted on a potato battery, and I'm at the end of my nerves, good code standards be damned, I'm using a second for loop for this like a caveman
-        cursor = stop
-    
-print(chunk_notes)
     
 
 class GameManager():
 
     def __init__(self):
+        
+        self.filename = filenames[0]
+        self.setup_song(self.filename)
         self.is_playing = False
         self.sung_note = -1
         self.cursor_pos = -1
         self.score = None
-        self.chunk_pixel_width = WIN_WIDTH / num_chunks_in_file
-        self.chunk_pixel_height = WIN_HEIGHT / (NOTE_RANGE[1] - NOTE_RANGE[0])
+        self.rating = ""
         self.deltas = deque([],maxlen=int(RATE/CHUNK_SIZE))
         self.setup_notes_graphics()
-        
+        self.setup_ui()
+
+    
+    def setup_song(self,filename):
+        filepath = os.path.join('songs', filename)
+        file = MidiFile(filepath)
+
+        length = file.length
+        self.num_chunks_in_file = int(length * (RATE / CHUNK_SIZE))
+        self.note_sheet = np.zeros((len(file.tracks),self.num_chunks_in_file), dtype=int)
+        tempo = 500000 
+
+        #midi_parse_re = re.compile("{.*} channel={.*} note={.*} velocity={.*} time={.*}")
+        for i, track in enumerate(file.tracks):
+            cursor = 0
+            for message in track:
+                if message.is_meta:
+                    print(message)
+                    continue
+                print(message)
+                #mode, channel, note, velocity, time = midi_parse_re.match(message).groups()
+                #print(f"mode: {mode}, note:{note}, time:{time}")
+                midi_type = message.dict()["type"]
+                time = mido.tick2second(message.dict()["time"], file.ticks_per_beat, tempo)
+                note = -1
+                start = cursor
+                stop = int(cursor + time * (RATE / CHUNK_SIZE))
+                if midi_type == "note_on":
+                    note = message.dict()["note"]
+                    stop = int(cursor + max(1, time * (RATE / CHUNK_SIZE)))
+
+                print(note, "   ", time)
+
+                
+                print(f"{start} - {stop}")
+                for j in range(start, stop):
+                    self.note_sheet[i][j] = note # inserting values via slices doesn't work, the numpy documentation is hosted on a potato battery, and I'm at the end of my nerves, good code standards be damned, I'm using a second for loop for this like a caveman
+                cursor = stop
+                
+        self.chunk_pixel_width = WIN_WIDTH / self.num_chunks_in_file
+        self.chunk_pixel_height = (WIN_HEIGHT-UI_HEIGHT) / (NOTE_RANGE[1] - NOTE_RANGE[0])
+            
+        print(self.note_sheet)        
 
     def setup_notes_graphics(self):
         self.notes_batch = pyglet.graphics.Batch()
         self.note_bars = []
-        for i, note in enumerate(chunk_notes[TN]):
+        for i, note in enumerate(self.note_sheet[TN]):
             xpos = i * self.chunk_pixel_width
-            ypos = self.chunk_pixel_height * (note - NOTE_RANGE[0])
+            ypos = UI_HEIGHT + self.chunk_pixel_height * (note - NOTE_RANGE[0])
             note_bar = pyglet.shapes.Rectangle(xpos,ypos,self.chunk_pixel_width, self.chunk_pixel_height, (255,255,0), batch=self.notes_batch)
             self.note_bars.append(note_bar)
+
+    def setup_ui(self):
+        self.score_label = pyglet.text.Label("", font_name="Century Gothic", font_size=30)
+        self.score_label.x = WIN_WIDTH - 200
+        self.score_label.y = 75
+
+        self.rating_label = pyglet.text.Label("", font_name="Century Gothic", font_size=30)
+        self.rating_label.x = 15
+        self.rating_label.y = 75
     
 
     def draw_notes (self):
@@ -145,16 +175,29 @@ class GameManager():
     def draw_cursor(self):
         if self.cursor_pos != -1:
             xpos = self.cursor_pos * self.chunk_pixel_width
-            cursor_bar = pyglet.shapes.Rectangle(xpos, 0, self.chunk_pixel_width, WIN_HEIGHT, color=(255,255,255))
+            cursor_bar = pyglet.shapes.Rectangle(xpos, UI_HEIGHT, self.chunk_pixel_width, WIN_HEIGHT-UI_HEIGHT, color=(255,255,255))
             cursor_bar.draw()
 
     def draw_sung_note(self):
         note = self.sung_note
         if note != -1:
             bar_height = self.chunk_pixel_height / 2
-            ypos = self.chunk_pixel_height * (note - NOTE_RANGE[0]) - self.chunk_pixel_height / 4
+            ypos = UI_HEIGHT + self.chunk_pixel_height * (note - NOTE_RANGE[0]) - self.chunk_pixel_height / 4
             bar = pyglet.shapes.Rectangle(0,ypos, WIN_WIDTH, bar_height, (255,0,0))
             bar.draw()
+
+    def draw_ui(self):
+        self.rating_label.text = self.rating
+        self.rating_label.draw()
+
+        self.score_label.text = f"Score :{int(self.score)}" if self.score != None else ""
+        self.score_label.draw()
+    
+    def render(self):
+        gm.draw_notes()
+        gm.draw_sung_note()
+        gm.draw_cursor()
+        gm.draw_ui()
             
     def play_round(self):
 
@@ -164,11 +207,12 @@ class GameManager():
         round_loop_thread.start()
 
     def round_loop(self):
+        self.score = 0
         self.cursor_pos = 0
         last_note = -1
-        print(len(chunk_notes[TN]))
+        print(len(self.note_sheet[TN]))
         # continuously capture and plot audio singal
-        while self.cursor_pos < len(chunk_notes[TN]):
+        while self.cursor_pos < len(self.note_sheet[TN]):
             # Read audio data from stream
             data = stream.read(CHUNK_SIZE)
 
@@ -186,20 +230,20 @@ class GameManager():
                 base_note = midi_note % 8
                 octaves = np.array([i*8+base_note for i in range(1,11)])
                 
-                if chunk_notes[TN][self.cursor_pos] != -1 and chunk_notes[TN][self.cursor_pos] != 0:
-                    differences = np.abs(octaves - chunk_notes[TN][self.cursor_pos])
-                    last_note = chunk_notes[TN][self.cursor_pos]
+                if self.note_sheet[TN][self.cursor_pos] != -1 and self.note_sheet[TN][self.cursor_pos] != 0:
+                    differences = np.abs(octaves - self.note_sheet[TN][self.cursor_pos])
+                    last_note = self.note_sheet[TN][self.cursor_pos]
                 else:
                     differences = np.abs(octaves - last_note)
                 official_difference = np.min(differences)
                 official_note = list(octaves)[list(differences).index(official_difference)]
                 self.sung_note = official_note
-                print(official_difference)
-                if chunk_notes[TN][self.cursor_pos] != -1 and chunk_notes[TN][self.cursor_pos] != 0:
+                #print(official_difference)
+                if self.note_sheet[TN][self.cursor_pos] != -1 and self.note_sheet[TN][self.cursor_pos] != 0:
                     #give a score
                     self.deltas.append(official_difference)
                     self.calc_score()
-                    #difference = abs(chunk_notes[TN][self.cursor_pos] - midi_note)
+                    #difference = abs(self.note_sheet[TN][self.cursor_pos] - midi_note)
                 #print(midi_note)
                 #line.set_ydata(midi_note)
             #print(np.max(frequencies[np.where(np.abs(fourier) == np.max(np.abs(fourier)))]))
@@ -211,6 +255,17 @@ class GameManager():
     
     def calc_score(self):
         avg_difference = np.mean(list(self.deltas))
+        rating = ""
+        for key in RATING_THRESHOLDS.keys():
+            if avg_difference < RATING_THRESHOLDS[key]:
+                rating = key
+                break
+        self.rating = rating
+
+        self.score += max(10 - self.deltas[-1] * 5, 0)
+        
+
+
 
 
 gm = GameManager()
@@ -226,13 +281,22 @@ def on_key_press(symbol, modifiers):
         window.close()
         os._exit(0)
 
+    if symbol == pyglet.window.key._1:
+        gm.filename = filenames[0]
+        gm.setup_song(gm.filename)
+        gm.setup_notes_graphics()
+
+    if symbol == pyglet.window.key._2:
+        gm.filename = filenames[1]
+        gm.setup_song(gm.filename)
+        gm.setup_notes_graphics()
+        
+
 
 @window.event
 def on_draw():
     window.clear()
-    gm.draw_notes()
-    gm.draw_sung_note()
-    gm.draw_cursor()
+    gm.render()
 
 pyglet.app.run()
 
