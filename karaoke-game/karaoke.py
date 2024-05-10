@@ -244,7 +244,7 @@ class GameManager():
         # continuously capture and plot audio singal # here, we start getting into some stolen code again
         while self.cursor_pos < len(self.note_sheet[TN]):
             # Read audio data from stream
-            data = stream.read(CHUNK_SIZE)
+            data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
 
             # Convert audio data to numpy array
             data = np.frombuffer(data, dtype=np.int16)

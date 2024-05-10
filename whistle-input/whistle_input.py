@@ -97,7 +97,7 @@ chunks_since_last_input = 0
 while True:
     chunks_since_last_input += 1
     # Read audio data from stream
-    data = stream.read(CHUNK_SIZE)
+    data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
 
     # Convert audio data to numpy array
     data = np.frombuffer(data, dtype=np.int16)
